@@ -8,9 +8,42 @@ import tkinter as tk
 from tkinter import filedialog, messagebox, simpledialog
 import json
 import os
+import shutil
 import subprocess
 import sys
 import webbrowser
+
+# ── 平台检测 ─────────────────────────────────────────
+IS_WINDOWS = sys.platform.startswith("win")
+IS_MACOS   = sys.platform == "darwin"
+IS_LINUX   = sys.platform.startswith("linux")
+
+# Windows-only：subprocess 不弹控制台
+POPEN_NO_WINDOW = {"creationflags": subprocess.CREATE_NO_WINDOW} if IS_WINDOWS else {}
+
+
+def open_path(path: str):
+    """用系统默认程序打开文件 / 文件夹（跨平台等价于 os.startfile）"""
+    if IS_WINDOWS:
+        os.startfile(path)  # type: ignore[attr-defined]
+    elif IS_MACOS:
+        subprocess.Popen(["open", path])
+    else:
+        subprocess.Popen(["xdg-open", path])
+
+
+def pick_font(candidates: list[str], fallback: str = "TkDefaultFont") -> str:
+    """从候选列表里返回第一个系统已安装的字体；都没有就回退"""
+    try:
+        from tkinter import font as tkfont
+        installed = set(tkfont.families())
+        for name in candidates:
+            if name in installed:
+                return name
+    except Exception:
+        pass
+    return fallback
+
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 CFG_FILE = os.path.join(BASE_DIR, "items.json")
@@ -41,9 +74,27 @@ C_RED  = "#f38ba8"
 C_HANDLE = "#89b4fa"
 C_SEL = "#3a3f5c"
 
-FONT_NAME  = ("Microsoft YaHei UI", 11)
-FONT_BOLD  = ("Microsoft YaHei UI", 12, "bold")
-FONT_SMALL = ("Microsoft YaHei UI", 10)
+FONT_FAMILY  = "TkDefaultFont"
+EMOJI_FAMILY = "TkDefaultFont"
+
+FONT_NAME  = (FONT_FAMILY, 11)
+FONT_BOLD  = (FONT_FAMILY, 12, "bold")
+FONT_SMALL = (FONT_FAMILY, 10)
+
+# 候选字体（按优先级，第一个装了就用）
+CJK_CANDIDATES = [
+    "Microsoft YaHei UI", "Microsoft YaHei",          # Windows
+    "PingFang SC", "Hiragino Sans GB",                # macOS
+    "Noto Sans CJK SC", "Source Han Sans SC",         # Linux 常见
+    "WenQuanYi Micro Hei", "WenQuanYi Zen Hei",
+    "DejaVu Sans",
+]
+EMOJI_CANDIDATES = [
+    "Segoe UI Emoji",      # Windows
+    "Apple Color Emoji",   # macOS
+    "Noto Color Emoji",    # Linux
+    "Symbola",
+]
 
 BAR_W      = 440
 SIDEBAR_W  = 56        # 左侧分类导航宽度
@@ -66,6 +117,9 @@ class GameBar:
         self.root.wm_attributes("-alpha", self.opacity)
         self.sw = self.root.winfo_screenwidth()
         self.sh = self.root.winfo_screenheight()
+
+        # 根据系统已装字体动态选择 CJK / Emoji 家族
+        self._resolve_fonts()
 
         self._visible = False
         self._animating = False
@@ -93,6 +147,26 @@ class GameBar:
 
         # 定时自动保存：每 30 秒存一次，防崩溃/断电丢失
         self._auto_save_timer = self.root.after(30000, self._auto_save_loop)
+
+    def _resolve_fonts(self):
+        """运行时探测可用字体，更新模块级 FONT_* 常量"""
+        global FONT_FAMILY, EMOJI_FAMILY, FONT_NAME, FONT_BOLD, FONT_SMALL
+        try:
+            from tkinter import font as tkfont
+            installed = set(tkfont.families(self.root))
+        except Exception:
+            installed = set()
+        for c in CJK_CANDIDATES:
+            if c in installed:
+                FONT_FAMILY = c
+                break
+        for c in EMOJI_CANDIDATES:
+            if c in installed:
+                EMOJI_FAMILY = c
+                break
+        FONT_NAME  = (FONT_FAMILY, 11)
+        FONT_BOLD  = (FONT_FAMILY, 12, "bold")
+        FONT_SMALL = (FONT_FAMILY, 10)
 
     # ════════════════════════════════════════════
     # 配置
@@ -319,7 +393,7 @@ class GameBar:
 
         # 小图标 + 名称
         tk.Label(inner, text=info["icon"], bg=C_CARD,
-                 font=("Segoe UI Emoji", 14)).pack(side="left", padx=(0, 8))
+                 font=(EMOJI_FAMILY, 14)).pack(side="left", padx=(0, 8))
         tk.Label(inner, text=name, bg=C_CARD, fg=C_TEXT,
                  font=FONT_BOLD).pack(side="left")
 
@@ -530,7 +604,7 @@ class GameBar:
                           ("⚙", C_TEXT, self._open_settings),
                           ("✕", C_RED, self._quit)]:
             tk.Button(btns, text=t, bg=C_BAR, fg=c, bd=0,
-                      font=("Arial", 13), activebackground=C_HOVER,
+                      font=(FONT_FAMILY, 13), activebackground=C_HOVER,
                       activeforeground=c, cursor="hand2",
                       command=cmd).pack(side="left", padx=3)
 
@@ -613,7 +687,7 @@ class GameBar:
         c_circle = tk.Canvas(claude_inner, width=36, height=36, bg="#1e2030",
                              highlightthickness=0)
         c_circle.create_oval(2, 2, 34, 34, fill="#cba6f7", outline="")
-        c_circle.create_text(18, 18, text="🧠", font=("Segoe UI Emoji", 14))
+        c_circle.create_text(18, 18, text="🧠", font=(EMOJI_FAMILY, 14))
         c_circle.pack()
 
         tk.Label(claude_inner, text="Claude", bg="#1e2030", fg="#cba6f7",
@@ -650,7 +724,7 @@ class GameBar:
 
         k_circle = tk.Canvas(kill_inner, width=36, height=36, bg="#1e2030", highlightthickness=0)
         k_circle.create_oval(2, 2, 34, 34, fill="#f38ba8", outline="")
-        k_circle.create_text(18, 18, text="🌐", font=("Segoe UI Emoji", 13))
+        k_circle.create_text(18, 18, text="🌐", font=(EMOJI_FAMILY, 13))
         k_circle.pack()
 
         tk.Label(kill_inner, text="关闭网页", bg="#1e2030", fg=C_RED,
@@ -672,7 +746,7 @@ class GameBar:
 
         circle = tk.Canvas(inner, width=36, height=36, bg="#1e2030", highlightthickness=0)
         circle.create_oval(2, 2, 34, 34, fill=color, outline="")
-        circle.create_text(18, 18, text=icon, font=("Segoe UI Emoji", 14))
+        circle.create_text(18, 18, text=icon, font=(EMOJI_FAMILY, 14))
         circle.pack()
 
         tk.Label(inner, text=label, bg="#1e2030", fg=C_SUB,
@@ -696,20 +770,49 @@ class GameBar:
     def _launch_claude(self):
         """在终端中启动 Claude"""
         try:
-            subprocess.Popen('start "Claude" cmd /k claude', shell=True,
-                           creationflags=subprocess.CREATE_NO_WINDOW)
+            if IS_WINDOWS:
+                subprocess.Popen('start "Claude" cmd /k claude', shell=True,
+                                 **POPEN_NO_WINDOW)
+            elif IS_MACOS:
+                subprocess.Popen([
+                    "osascript", "-e",
+                    'tell app "Terminal" to do script "claude"'])
+            else:
+                # Linux：依次尝试常见终端模拟器
+                for term, args in (
+                    ("gnome-terminal", ["--", "bash", "-c", "claude; exec bash"]),
+                    ("konsole",        ["-e", "bash", "-c", "claude; exec bash"]),
+                    ("xfce4-terminal", ["-e", "bash -c 'claude; exec bash'"]),
+                    ("alacritty",      ["-e", "bash", "-c", "claude; exec bash"]),
+                    ("kitty",          ["bash", "-c", "claude; exec bash"]),
+                    ("xterm",          ["-e", "bash -c 'claude; exec bash'"]),
+                ):
+                    if shutil.which(term):
+                        subprocess.Popen([term, *args])
+                        break
+                else:
+                    self._flash("未找到终端模拟器")
+                    return
             self._flash("Claude 已启动")
         except Exception as e:
             self._flash(f"启动 Claude 失败: {e}")
 
     def _close_browsers(self):
         """一键关闭所有浏览器窗口"""
-        browsers = ["chrome.exe", "msedge.exe", "firefox.exe", "opera.exe", "brave.exe"]
-        # 合并为一条命令，隐藏控制台窗口
-        cmd = ["taskkill", "/f"] + [arg for b in browsers for arg in ("/im", b)]
         try:
-            subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                           creationflags=subprocess.CREATE_NO_WINDOW)
+            if IS_WINDOWS:
+                names = ["chrome.exe", "msedge.exe", "firefox.exe",
+                         "opera.exe", "brave.exe"]
+                cmd = ["taskkill", "/f"] + [a for n in names for a in ("/im", n)]
+                subprocess.Popen(cmd, stdout=subprocess.DEVNULL,
+                                 stderr=subprocess.DEVNULL, **POPEN_NO_WINDOW)
+            else:
+                # Linux / macOS：pkill 按进程名匹配
+                names = ["chrome", "chromium", "msedge", "firefox", "opera", "brave"]
+                for n in names:
+                    subprocess.Popen(["pkill", "-f", n],
+                                     stdout=subprocess.DEVNULL,
+                                     stderr=subprocess.DEVNULL)
             self._flash("正在关闭浏览器...")
         except Exception as e:
             self._flash(f"关闭失败: {e}")
@@ -897,7 +1000,7 @@ class GameBar:
                        fill=info["color"], outline="")
         av.create_text(av_size / 2 + 2, av_size / 2 + 2,
                        text=name[0] if name else "?",
-                       fill=C_BAR, font=("Microsoft YaHei UI", 15, "bold"))
+                       fill=C_BAR, font=(FONT_FAMILY, 15, "bold"))
 
         # ── 文字 ──
         txt = tk.Frame(row, bg=C_CARD)
@@ -912,7 +1015,7 @@ class GameBar:
 
         # ── 删除按钮 ──
         dbtn = tk.Label(row, text="✕", bg=C_CARD, fg=C_SUB,
-                        font=("Arial", 10), cursor="hand2")
+                        font=(FONT_FAMILY, 10), cursor="hand2")
         dbtn.pack(side="right", padx=(0, 12), pady=8)
         dbtn.bind("<Button-1>", lambda e, i=idx: self._delete_item(i))
         dbtn.bind("<Enter>", lambda e, d=dbtn, r=row:
@@ -978,15 +1081,16 @@ class GameBar:
         self._flash(f"正在启动 {item['name']}...")
         try:
             if itype in ("game", "app", "file", "folder"):
-                os.startfile(path)
+                open_path(path)
             elif itype == "project":
-                subprocess.Popen(f'code "{path}"', shell=True)
+                editor = self.editor or "code"
+                subprocess.Popen([editor, path])
             elif itype == "url":
                 webbrowser.open(path if "://" in path else f"https://{path}")
             elif itype == "command":
                 subprocess.Popen(path, shell=True)
             else:
-                os.startfile(path)
+                open_path(path)
         except Exception as e:
             self._flash(f"启动失败: {str(e)[:50]}")
 
@@ -996,12 +1100,26 @@ class GameBar:
     def _load_browser_bookmarks(self):
         """读取 Chrome / Edge 书签，返回 [(name, url), ...]"""
         bookmarks = []
-        browsers = [
-            os.path.join(os.environ.get("LOCALAPPDATA", ""),
-                         r"Google\Chrome\User Data\Default\Bookmarks"),
-            os.path.join(os.environ.get("LOCALAPPDATA", ""),
-                         r"Microsoft\Edge\User Data\Default\Bookmarks"),
-        ]
+        home = os.path.expanduser("~")
+
+        if IS_WINDOWS:
+            base = os.environ.get("LOCALAPPDATA", "")
+            browsers = [
+                os.path.join(base, r"Google\Chrome\User Data\Default\Bookmarks"),
+                os.path.join(base, r"Microsoft\Edge\User Data\Default\Bookmarks"),
+            ]
+        elif IS_MACOS:
+            browsers = [
+                os.path.join(home, "Library/Application Support/Google/Chrome/Default/Bookmarks"),
+                os.path.join(home, "Library/Application Support/Microsoft Edge/Default/Bookmarks"),
+            ]
+        else:
+            browsers = [
+                os.path.join(home, ".config/google-chrome/Default/Bookmarks"),
+                os.path.join(home, ".config/chromium/Default/Bookmarks"),
+                os.path.join(home, ".config/microsoft-edge/Default/Bookmarks"),
+                os.path.join(home, ".config/BraveSoftware/Brave-Browser/Default/Bookmarks"),
+            ]
 
         def _walk(node, result):
             if node.get("type") == "url":
@@ -1113,33 +1231,30 @@ class GameBar:
     # 增删改
     # ════════════════════════════════════════════
     def _add_item(self):
-        # 在分类视图下直接使用当前分类类型
-        if self._scroll_target and self._scroll_target in ITEM_TYPES:
-            itype = self._scroll_target
-        else:
-            tmenu = tk.Menu(self.root, tearoff=0, bg=C_CARD, fg=C_TEXT,
-                            activebackground=C_HOVER, activeforeground=C_TEXT, font=FONT_SMALL)
-            chosen = tk.StringVar(value="")
-            done = tk.BooleanVar(value=False)
+        # 始终弹出类型选择菜单（不再因为侧边栏选中分类就跳过）
+        tmenu = tk.Menu(self.root, tearoff=0, bg=C_CARD, fg=C_TEXT,
+                        activebackground=C_HOVER, activeforeground=C_TEXT, font=FONT_SMALL)
+        chosen = tk.StringVar(value="")
+        done = tk.BooleanVar(value=False)
 
-            def pick(k):
-                if not done.get():
-                    done.set(True)
-                    chosen.set(k)
-                tmenu.unpost()
+        def pick(k):
+            if not done.get():
+                done.set(True)
+                chosen.set(k)
+            tmenu.unpost()
 
-            for k, v in ITEM_TYPES.items():
-                tmenu.add_command(label=f"{v['icon']}  {v['label']}", command=lambda k=k: pick(k))
+        for k, v in ITEM_TYPES.items():
+            tmenu.add_command(label=f"{v['icon']}  {v['label']}", command=lambda k=k: pick(k))
 
-            tmenu.bind("<Unmap>",
-                       lambda e: self.root.after(80, lambda: done.get() or chosen.set("")))
+        tmenu.bind("<Unmap>",
+                   lambda e: self.root.after(80, lambda: done.get() or chosen.set("")))
 
-            tmenu.tk_popup(self.root.winfo_rootx() + 48, self.root.winfo_rooty() + 48)
-            self.root.wait_variable(chosen)
-            tmenu.grab_release()
-            tmenu.destroy()
+        tmenu.tk_popup(self.root.winfo_rootx() + 48, self.root.winfo_rooty() + 48)
+        self.root.wait_variable(chosen)
+        tmenu.grab_release()
+        tmenu.destroy()
 
-            itype = chosen.get()
+        itype = chosen.get()
         if not itype:
             return
         info = ITEM_TYPES[itype]
@@ -1151,10 +1266,16 @@ class GameBar:
 
         path = ""
         if itype in ("game", "app"):
+            if IS_WINDOWS:
+                ftypes = [("可执行/快捷方式", "*.exe;*.lnk"), ("所有", "*.*")]
+            elif IS_MACOS:
+                ftypes = [(".app", "*.app"), ("所有", "*.*")]
+            else:
+                ftypes = [("可执行/桌面入口", "*.desktop *.sh *.AppImage"),
+                          ("所有", "*.*")]
             path = filedialog.askopenfilename(
                 title=f"选择{info['label']}程序",
-                filetypes=[("可执行/快捷方式", "*.exe;*.lnk"), ("所有", "*.*")],
-                parent=self.root)
+                filetypes=ftypes, parent=self.root)
             if not path:
                 path = simpledialog.askstring(f"{info['label']}路径",
                                               "也可输入路径或 Steam URL:", parent=self.root)
@@ -1164,16 +1285,20 @@ class GameBar:
             path = filedialog.askdirectory(title="选择文件夹", parent=self.root)
         elif itype == "project":
             # 项目默认从用户目录开始选择
-            start_dir = os.path.expanduser("~")
-            # 尝试更合理的默认路径
-            for d in [r"D:\Projects", r"D:\Code", r"D:\project",
-                      os.path.join(os.path.expanduser("~"), "Projects"),
-                      os.path.join(os.path.expanduser("~"), "Code")]:
+            home = os.path.expanduser("~")
+            start_dir = home
+            candidates = [os.path.join(home, "Projects"),
+                          os.path.join(home, "Code"),
+                          os.path.join(home, "code"),
+                          os.path.join(home, "workspace")]
+            if IS_WINDOWS:
+                candidates = [r"D:\Projects", r"D:\Code", r"D:\project"] + candidates
+            for d in candidates:
                 if os.path.isdir(d):
                     start_dir = d
                     break
             path = filedialog.askdirectory(
-                title="选择项目文件夹（将用 VS Code 打开）",
+                title="选择项目文件夹（将用编辑器打开）",
                 initialdir=start_dir, parent=self.root)
         elif itype == "command":
             path = simpledialog.askstring("命令", "输入命令:", parent=self.root)
@@ -1336,38 +1461,78 @@ class GameBar:
     # 开机自启
     # ════════════════════════════════════════════
     def _startup_path(self):
-        return os.path.join(os.environ["APPDATA"],
-                            r"Microsoft\Windows\Start Menu\Programs\Startup",
-                            "QuickBar.lnk")
+        if IS_WINDOWS:
+            return os.path.join(os.environ["APPDATA"],
+                                r"Microsoft\Windows\Start Menu\Programs\Startup",
+                                "QuickBar.lnk")
+        if IS_MACOS:
+            return os.path.expanduser(
+                "~/Library/LaunchAgents/com.quickbar.plist")
+        # Linux
+        return os.path.expanduser("~/.config/autostart/quickbar.desktop")
 
     def _autostart_check(self):
         return os.path.exists(self._startup_path())
 
     def _autostart_toggle(self, enable):
+        sp = self._startup_path()
         try:
-            import tempfile
-            sp = self._startup_path()
-            if enable:
-                # 创建开机自启快捷方式
+            if not enable:
+                if os.path.exists(sp):
+                    os.remove(sp)
+                return
+
+            os.makedirs(os.path.dirname(sp), exist_ok=True)
+            script = os.path.join(BASE_DIR, "game_bar.py")
+
+            if IS_WINDOWS:
+                import tempfile
                 ps = f"""
 $WshShell = New-Object -ComObject WScript.Shell
 $sc = $WshShell.CreateShortcut("{sp}")
 $sc.TargetPath = "{sys.executable}"
-$sc.Arguments = "{os.path.join(BASE_DIR, 'game_bar.py')}"
+$sc.Arguments = "{script}"
 $sc.WorkingDirectory = "{BASE_DIR}"
 $sc.IconLocation = "shell32.dll,14"
 $sc.Save()
 """
-                with tempfile.NamedTemporaryFile(suffix=".ps1", delete=False, mode="w",
-                                                 encoding="utf-8") as f:
+                with tempfile.NamedTemporaryFile(suffix=".ps1", delete=False,
+                                                 mode="w", encoding="utf-8") as f:
                     f.write(ps)
                     tmp = f.name
-                subprocess.run(["powershell", "-ExecutionPolicy", "Bypass", "-File", tmp],
-                               capture_output=True)
+                subprocess.run(["powershell", "-ExecutionPolicy", "Bypass",
+                                "-File", tmp], capture_output=True)
                 os.unlink(tmp)
+            elif IS_MACOS:
+                plist = f"""<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>Label</key><string>com.quickbar</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>{sys.executable}</string>
+    <string>{script}</string>
+  </array>
+  <key>WorkingDirectory</key><string>{BASE_DIR}</string>
+  <key>RunAtLoad</key><true/>
+</dict></plist>
+"""
+                with open(sp, "w", encoding="utf-8") as f:
+                    f.write(plist)
             else:
-                if os.path.exists(sp):
-                    os.remove(sp)
+                # Linux：XDG autostart .desktop
+                desktop = (
+                    "[Desktop Entry]\n"
+                    "Type=Application\n"
+                    "Name=QuickBar\n"
+                    f"Exec={sys.executable} {script}\n"
+                    f"Path={BASE_DIR}\n"
+                    "X-GNOME-Autostart-enabled=true\n"
+                    "Terminal=false\n"
+                )
+                with open(sp, "w", encoding="utf-8") as f:
+                    f.write(desktop)
+                os.chmod(sp, 0o755)
         except Exception as e:
             messagebox.showerror("开机自启", f"操作失败: {e}")
 
