@@ -1,0 +1,33 @@
+{
+  "position": "right",
+  "hide_delay_ms": 200,
+  "editor": "code",
+  "opacity": 0.9,
+  "items": [
+    {
+      "type": "url",
+      "name": "GitHub",
+      "path": "https://github.com"
+    },
+    {
+      "type": "app",
+      "name": "记事本",
+      "path": "C:/Windows/System32/notepad.exe"
+    },
+    {
+      "type": "folder",
+      "name": "下载",
+      "path": "C:/Users/YourName/Downloads"
+    },
+    {
+      "type": "project",
+      "name": "示例项目",
+      "path": "C:/Users/YourName/Projects/demo"
+    },
+    {
+      "type": "command",
+      "name": "打开计算器",
+      "path": "calc.exe"
+    }
+  ]
+}

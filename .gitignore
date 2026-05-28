@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+.venv/
+venv/
+
+# 用户配置（含本地路径，不应提交）
+items.json
+games.json
+*.bak
+
+# IDE / 工具
+.vscode/
+.idea/
+.claude/
+
+# 系统
+Thumbs.db
+.DS_Store
