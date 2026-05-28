@@ -3,6 +3,7 @@
   "hide_delay_ms": 200,
   "editor": "code",
   "opacity": 0.9,
+  "ocr_hotkey": "ctrl+shift+space",
   "items": [
     {
       "type": "url",

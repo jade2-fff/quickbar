@@ -13,6 +13,8 @@ import subprocess
 import sys
 import webbrowser
 
+from ocr_overlay import OCROverlay
+
 # ── 平台检测 ─────────────────────────────────────────
 IS_WINDOWS = sys.platform.startswith("win")
 IS_MACOS   = sys.platform == "darwin"
@@ -99,8 +101,9 @@ EMOJI_CANDIDATES = [
 BAR_W      = 440
 SIDEBAR_W  = 56        # 左侧分类导航宽度
 HANDLE_W   = 12        # 隐藏时露出的把手宽度
-ANIM_FRAMES = 8        # 动画帧数
-ANIM_MS    = 10        # 每帧间隔
+# Linux X11 下 geometry() 每次要往 X server 走一圈，密集帧会堆积事件队列
+ANIM_FRAMES = 4 if IS_LINUX else 8
+ANIM_MS    = 16 if IS_LINUX else 10
 
 
 class GameBar:
@@ -111,6 +114,7 @@ class GameBar:
         self.hide_delay_ms = self.cfg.get("hide_delay_ms", 900)
         self.editor = self.cfg.get("editor", "code")
         self.opacity = self.cfg.get("opacity", 0.82)
+        self.ocr_hotkey = self.cfg.get("ocr_hotkey", "ctrl+shift+space")
 
         self.root = tk.Tk()
         self.root.withdraw()
@@ -140,6 +144,11 @@ class GameBar:
         self._build_ui()
         self._go_hidden()
         self.root.deiconify()
+
+        # 屏幕 OCR 覆盖层（首次使用时才会加载 OCR 引擎）
+        self.ocr = OCROverlay(self.root, FONT_FAMILY)
+        self._ocr_hotkey_handle = None
+        self._setup_ocr_hotkey()
 
         # 窗口关闭时自动保存（覆盖 Alt+F4、系统关机等所有退出方式）
         self.root.protocol("WM_DELETE_WINDOW", self._quit)
@@ -200,7 +209,8 @@ class GameBar:
     def _save(self):
         """原子写入：先写临时文件再替换，防止断电/崩溃损坏配置"""
         self.cfg.update(position=self.position, hide_delay_ms=self.hide_delay_ms,
-                        editor=self.editor, opacity=self.opacity, items=self.items)
+                        editor=self.editor, opacity=self.opacity,
+                        ocr_hotkey=self.ocr_hotkey, items=self.items)
         try:
             tmp = CFG_FILE + ".tmp"
             with open(tmp, "w", encoding="utf-8") as f:
@@ -671,7 +681,11 @@ class GameBar:
         self.status_lbl.pack(fill="x", padx=10, pady=2)
 
         # 统一滚轮调度：根据鼠标位置判断滚动侧边栏还是内容区
+        # Windows/macOS 用 <MouseWheel>，Linux X11 用 Button-4/Button-5
         self.root.bind_all("<MouseWheel>", self._on_global_wheel)
+        if IS_LINUX:
+            self.root.bind_all("<Button-4>", lambda e: self._on_global_wheel(e, -1))
+            self.root.bind_all("<Button-5>", lambda e: self._on_global_wheel(e, 1))
 
         self._refresh_sidebar()
         self._refresh_entries()
@@ -716,6 +730,26 @@ class GameBar:
 
         # ── 底部操作区 ──
         tk.Frame(sb, bg="#2a2d40", height=1).pack(fill="x", padx=8, pady=4)
+
+        # 文字识别按钮（屏幕 OCR）
+        ocr_btn = tk.Frame(sb, bg="#1e2030", cursor="hand2")
+        ocr_inner = tk.Frame(ocr_btn, bg="#1e2030")
+        ocr_inner.pack(padx=8, pady=4)
+
+        o_circle = tk.Canvas(ocr_inner, width=36, height=36, bg="#1e2030", highlightthickness=0)
+        o_circle.create_oval(2, 2, 34, 34, fill="#f9e2af", outline="")
+        o_circle.create_text(18, 18, text="🔍", font=(EMOJI_FAMILY, 13))
+        o_circle.pack()
+
+        tk.Label(ocr_inner, text="文字识别", bg="#1e2030", fg="#f9e2af",
+                 font=(FONT_NAME[0], 8), anchor="center").pack(pady=(2, 0))
+
+        for w in (ocr_btn, ocr_inner, o_circle):
+            w.bind("<Button-1>", lambda e: self._launch_ocr())
+            w.bind("<Enter>", lambda e: self._simple_hover(ocr_btn, True))
+            w.bind("<Leave>", lambda e: self._simple_hover(ocr_btn, False))
+
+        ocr_btn.pack(pady=2)
 
         # 一键关闭浏览器按钮
         kill_btn = tk.Frame(sb, bg="#1e2030", cursor="hand2")
@@ -779,13 +813,16 @@ class GameBar:
                     'tell app "Terminal" to do script "claude"'])
             else:
                 # Linux：依次尝试常见终端模拟器
+                # bash -lic = login + interactive，会加载 ~/.profile / ~/.bashrc
+                # 否则 ANTHROPIC_API_KEY、nvm 装的 node 等环境变量都拿不到
+                cmd = "claude; exec bash"
                 for term, args in (
-                    ("gnome-terminal", ["--", "bash", "-c", "claude; exec bash"]),
-                    ("konsole",        ["-e", "bash", "-c", "claude; exec bash"]),
-                    ("xfce4-terminal", ["-e", "bash -c 'claude; exec bash'"]),
-                    ("alacritty",      ["-e", "bash", "-c", "claude; exec bash"]),
-                    ("kitty",          ["bash", "-c", "claude; exec bash"]),
-                    ("xterm",          ["-e", "bash -c 'claude; exec bash'"]),
+                    ("gnome-terminal", ["--", "bash", "-lic", cmd]),
+                    ("konsole",        ["-e", "bash", "-lic", cmd]),
+                    ("xfce4-terminal", ["-e", f"bash -lic '{cmd}'"]),
+                    ("alacritty",      ["-e", "bash", "-lic", cmd]),
+                    ("kitty",          ["bash", "-lic", cmd]),
+                    ("xterm",          ["-e", f"bash -lic '{cmd}'"]),
                 ):
                     if shutil.which(term):
                         subprocess.Popen([term, *args])
@@ -796,6 +833,53 @@ class GameBar:
             self._flash("Claude 已启动")
         except Exception as e:
             self._flash(f"启动 Claude 失败: {e}")
+
+    # ════════════════════════════════════════════
+    # 屏幕 OCR
+    # ════════════════════════════════════════════
+    def _launch_ocr(self):
+        """打开屏幕 OCR 覆盖层"""
+        try:
+            self.ocr.show()
+        except Exception as e:
+            self._flash(f"OCR 启动失败: {e}")
+
+    def _setup_ocr_hotkey(self):
+        """注册 OS 级全局热键。keyboard 包未装时退回到 Tk 局部绑定。"""
+        # Tk 局部绑定：QuickBar 有焦点时永远可用
+        try:
+            self.root.bind_all("<Control-Shift-space>",
+                               lambda e: self._launch_ocr())
+        except Exception:
+            pass
+
+        # 取消旧的全局热键
+        if self._ocr_hotkey_handle is not None:
+            try:
+                import keyboard as _kb
+                _kb.remove_hotkey(self._ocr_hotkey_handle)
+            except Exception:
+                pass
+            self._ocr_hotkey_handle = None
+
+        if not self.ocr_hotkey:
+            return
+
+        try:
+            import keyboard
+        except ImportError:
+            # 静默：keyboard 是可选依赖；首次打开设置时再提示用户
+            return
+
+        # keyboard 的回调跑在独立线程，必须用 after 派回 Tk 主线程
+        try:
+            self._ocr_hotkey_handle = keyboard.add_hotkey(
+                self.ocr_hotkey,
+                lambda: self.root.after(0, self._launch_ocr),
+                suppress=False,
+            )
+        except Exception as e:
+            self._flash(f"全局热键注册失败: {e}")
 
     def _close_browsers(self):
         """一键关闭所有浏览器窗口"""
@@ -865,30 +949,46 @@ class GameBar:
             w = w.master
         return False
 
-    def _on_global_wheel(self, event):
-        """统一滚轮：鼠标在侧边栏滚动侧边栏，否则滚动内容区"""
+    def _on_global_wheel(self, event, direction=None):
+        """统一滚轮：鼠标在侧边栏滚动侧边栏，否则滚动内容区
+        direction: Linux Button-4/5 显式传入 -1/+1；Windows/macOS 从 event.delta 算
+        """
+        if direction is None:
+            direction = int(-event.delta / 120) if event.delta else 0
+        if direction == 0:
+            return
         if self._is_inside(event.widget, self.sidebar):
-            self.sidebar_canvas.yview_scroll(int(-event.delta / 120), "units")
+            self.sidebar_canvas.yview_scroll(direction, "units")
         else:
-            self.canvas.yview_scroll(int(-event.delta / 120), "units")
+            self.canvas.yview_scroll(direction, "units")
 
     def _on_scrollbar(self, *args):
         self.canvas.yview(*args)
         self._check_scrollbar()
 
     def _check_scrollbar(self):
+        # 防重入：pack/pack_forget 会触发新的 <Configure>，
+        # Linux X11 上同步触发，边界尺寸抖动时容易循环
+        if getattr(self, "_checking_scrollbar", False):
+            return
         bbox = self.canvas.bbox("all")
         if not bbox:
             return
         need = bbox[3] > self.canvas.winfo_height()
         has = self.scrollbar.winfo_ismapped()
-        if need and not has:
-            self.canvas.pack_forget()
-            self.scrollbar.pack(side="right", fill="y")
-            self.canvas.pack(side="left", fill="both", expand=True)
-        elif not need and has:
-            self.scrollbar.pack_forget()
-            self.canvas.pack(side="left", fill="both", expand=True)
+        if need == has:
+            return
+        self._checking_scrollbar = True
+        try:
+            if need and not has:
+                self.canvas.pack_forget()
+                self.scrollbar.pack(side="right", fill="y")
+                self.canvas.pack(side="left", fill="both", expand=True)
+            elif not need and has:
+                self.scrollbar.pack_forget()
+                self.canvas.pack(side="left", fill="both", expand=True)
+        finally:
+            self._checking_scrollbar = False
 
     # ════════════════════════════════════════════
     # 条目列表
@@ -1371,14 +1471,14 @@ class GameBar:
     def _open_settings(self):
         w = tk.Toplevel(self.root)
         w.title("QuickBar 设置")
-        w.geometry("420x410")
+        w.geometry("460x500")
         w.configure(bg=C_BAR)
         w.resizable(False, False)
         try:
             w.wm_attributes("-topmost", True)
         except Exception:
             pass
-        w.geometry(f"+{(self.sw - 420) // 2}+{(self.sh - 410) // 2}")
+        w.geometry(f"+{(self.sw - 460) // 2}+{(self.sh - 500) // 2}")
 
         tk.Label(w, text="QuickBar 设置", bg=C_BAR, fg=C_ACC,
                  font=FONT_BOLD).pack(pady=(12, 10))
@@ -1436,6 +1536,28 @@ class GameBar:
                        command=lambda: self._autostart_toggle(auto.get())
                        ).pack(side="right")
 
+        # OCR 全局热键
+        hf = tk.Frame(w, bg=C_BAR)
+        hf.pack(fill="x", padx=28, pady=5)
+        tk.Label(hf, text="文字识别热键", bg=C_BAR, fg=C_TEXT,
+                 font=FONT_NAME).pack(side="left")
+        hv = tk.StringVar(value=self.ocr_hotkey)
+        tk.Entry(hf, textvariable=hv, bg=C_CARD, fg=C_TEXT, font=FONT_NAME,
+                 bd=0, width=18).pack(side="right")
+        tk.Button(hf, text="保存", bg=C_CARD, fg=C_TEXT, font=FONT_SMALL, bd=0,
+                  cursor="hand2", activebackground=C_HOVER,
+                  command=lambda: self._on_set("ocr_hotkey", hv.get())
+                  ).pack(side="right", padx=4)
+
+        try:
+            import keyboard  # noqa: F401
+            hint_extra = ""
+        except ImportError:
+            hint_extra = "（需 pip install keyboard 才能在任意窗口生效）"
+        tk.Label(w, text=f"格式如 ctrl+shift+space {hint_extra}",
+                 bg=C_BAR, fg=C_SUB, font=(FONT_NAME[0], 8)
+                 ).pack(padx=28, anchor="e")
+
         tk.Label(w, text="鼠标移到屏幕边缘唤出  |  Alt+` 切换\n↑↓ 选择  Enter 启动  Esc 收起  Delete 删除",
                  bg=C_BAR, fg=C_SUB, font=(FONT_NAME[0], 8), justify="center"
                  ).pack(pady=(14, 4))
@@ -1455,6 +1577,10 @@ class GameBar:
         elif key == "opacity":
             self.opacity = float(val)
             self.root.wm_attributes("-alpha", self.opacity)
+        elif key == "ocr_hotkey":
+            self.ocr_hotkey = (val or "").strip()
+            self._setup_ocr_hotkey()
+            self._flash(f"OCR 热键: {self.ocr_hotkey or '(已禁用)'}")
         self._save()
 
     # ════════════════════════════════════════════
@@ -1549,6 +1675,14 @@ $sc.Save()
         if not getattr(self, '_saved_on_exit', False):
             self._saved_on_exit = True
             self._save()
+        # 释放全局热键句柄，避免后台残留
+        if getattr(self, "_ocr_hotkey_handle", None) is not None:
+            try:
+                import keyboard as _kb
+                _kb.remove_hotkey(self._ocr_hotkey_handle)
+            except Exception:
+                pass
+            self._ocr_hotkey_handle = None
         self.root.destroy()
         sys.exit(0)
 
