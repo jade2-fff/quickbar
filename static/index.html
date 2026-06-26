@@ -1,0 +1,502 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>QuickBar</title>
+<script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+<style>
+:root {
+  --bg: rgba(26,27,38,0.92);
+  --card: rgba(40,43,61,0.85);
+  --hover: rgba(49,53,84,0.9);
+  --sel: rgba(58,63,92,0.9);
+  --text: #c8d0f0;
+  --sub: #6b7398;
+  --accent: #89b4fa;
+  --red: #f38ba8;
+  --green: #a6e3a1;
+  --yellow: #f9e2af;
+  --peach: #fab387;
+  --mauve: #cba6f7;
+  --teal: #94e2d5;
+  --radius: 14px;
+  --transition: 0.25s cubic-bezier(0.4,0,0.2,1);
+}
+* { margin:0; padding:0; box-sizing:border-box; }
+body {
+  font-family: -apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC','Microsoft YaHei',sans-serif;
+  background: transparent;
+  color: var(--text);
+  overflow: hidden;
+  user-select: none;
+  -webkit-user-select: none;
+  height: 100vh;
+}
+#app {
+  display: flex;
+  height: 100vh;
+  backdrop-filter: blur(24px) saturate(1.4);
+  -webkit-backdrop-filter: blur(24px) saturate(1.4);
+  background: var(--bg);
+  border-radius: var(--radius);
+  border: 1px solid rgba(255,255,255,0.08);
+  overflow: hidden;
+}
+
+/* ── 侧边栏 ── */
+.sidebar {
+  width: 64px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 12px 0;
+  gap: 4px;
+  background: rgba(30,32,48,0.6);
+  border-right: 1px solid rgba(255,255,255,0.05);
+  overflow-y: auto;
+}
+.side-btn {
+  width: 48px; height: 48px;
+  border-radius: 12px;
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  cursor: pointer;
+  transition: var(--transition);
+  position: relative;
+}
+.side-btn:hover { background: var(--hover); }
+.side-btn.active { background: var(--sel); }
+.side-btn .ico { font-size: 18px; line-height: 1; }
+.side-btn .lbl { font-size: 9px; margin-top: 2px; color: var(--sub); }
+.side-btn.active .lbl { color: var(--text); }
+.side-divider { width: 32px; height: 1px; background: rgba(255,255,255,0.08); margin: 4px 0; }
+
+/* ── 内容区 ── */
+.main {
+  flex: 1; display: flex; flex-direction: column;
+  overflow: hidden;
+}
+.header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 16px 18px 10px;
+}
+.header h2 { font-size: 16px; font-weight: 700; color: var(--accent); letter-spacing: -0.3px; }
+.header .cat-title { font-size: 15px; color: var(--text); }
+.header-btns { display: flex; gap: 6px; }
+.icon-btn {
+  width: 34px; height: 34px; border-radius: 10px;
+  background: var(--card); border: none; color: var(--text);
+  font-size: 16px; cursor: pointer; display: flex; align-items: center; justify-content: center;
+  transition: var(--transition);
+}
+.icon-btn:hover { background: var(--hover); }
+.icon-btn.danger { color: var(--red); }
+
+/* ── 列表 ── */
+.list {
+  flex: 1; overflow-y: auto; padding: 4px 12px 12px;
+}
+.group-title {
+  font-size: 11px; font-weight: 600; color: var(--sub);
+  padding: 12px 8px 4px; text-transform: uppercase; letter-spacing: 0.5px;
+}
+.item {
+  display: flex; align-items: center; gap: 14px;
+  padding: 12px 14px; margin: 2px 0;
+  border-radius: 12px; background: var(--card);
+  cursor: pointer; transition: var(--transition);
+}
+.item:hover { background: var(--hover); }
+.item.selected { background: var(--sel); outline: 1px solid var(--accent); }
+.item.dragging { opacity: 0.5; }
+.avatar {
+  width: 40px; height: 40px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 18px; font-weight: 700; flex-shrink: 0;
+  color: var(--bg);
+}
+.info { flex: 1; min-width: 0; }
+.name { font-size: 14px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.meta { font-size: 11px; color: var(--sub); margin-top: 2px; }
+.del-btn {
+  width: 28px; height: 28px; border-radius: 8px; border: none;
+  background: transparent; color: var(--sub); font-size: 14px;
+  cursor: pointer; display: flex; align-items: center; justify-content: center;
+  transition: var(--transition); flex-shrink: 0;
+}
+.del-btn:hover { background: var(--red); color: var(--bg); }
+
+/* ── 空状态 ── */
+.empty { text-align: center; padding: 40px 20px; color: var(--sub); }
+.empty .big { font-size: 48px; margin-bottom: 12px; }
+
+/* ── 底部 ── */
+.footer {
+  padding: 8px 18px; font-size: 10px; color: var(--sub);
+  border-top: 1px solid rgba(255,255,255,0.05);
+  display: flex; justify-content: space-between;
+}
+
+/* ── 设置弹窗 ── */
+.modal-overlay {
+  position: fixed; inset: 0;
+  background: rgba(0,0,0,0.5);
+  backdrop-filter: blur(8px);
+  display: flex; align-items: center; justify-content: center;
+  z-index: 100;
+}
+.modal {
+  background: var(--bg); border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 16px; padding: 24px; width: 380px; max-height: 80vh; overflow-y: auto;
+  animation: modalIn 0.2s ease;
+}
+@keyframes modalIn { from { opacity:0; transform: scale(0.95); } }
+.modal h3 { font-size: 18px; margin-bottom: 18px; color: var(--accent); }
+.row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }
+.row label { font-size: 13px; }
+.row select, .row input { background: var(--card); color: var(--text); border: none; padding: 6px 10px; border-radius: 8px; font-size: 13px; }
+.row input[type="range"] { flex: 1; margin: 0 10px; accent-color: var(--accent); }
+.btn { padding: 8px 20px; border-radius: 10px; border: none; cursor: pointer; font-size: 13px; font-weight: 600; transition: var(--transition); }
+.btn-primary { background: var(--accent); color: var(--bg); }
+.btn-primary:hover { opacity: 0.85; }
+.btn-ghost { background: var(--card); color: var(--text); }
+.btn-ghost:hover { background: var(--hover); }
+
+/* ── 滚动条 ── */
+::-webkit-scrollbar { width: 5px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 3px; }
+
+/* ── Toast ── */
+.toast {
+  position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
+  background: var(--accent); color: var(--bg); padding: 10px 24px;
+  border-radius: 10px; font-size: 13px; font-weight: 600;
+  z-index: 200; animation: toastIn 0.3s ease;
+  pointer-events: none;
+}
+@keyframes toastIn { from { opacity:0; transform:translateX(-50%) translateY(10px); } }
+</style>
+</head>
+<body>
+<div id="app">
+  <!-- 侧边栏 -->
+  <aside class="sidebar">
+    <div class="side-btn" :class="{active:filter==='all'}" @click="filter='all'" title="全部">
+      <span class="ico">📋</span><span class="lbl">全部</span>
+    </div>
+    <div class="side-divider"></div>
+    <div v-for="(info,key) in types" class="side-btn"
+         :class="{active:filter===key}" @click="filter=key"
+         :title="info.label">
+      <span class="ico">{{info.icon}}</span>
+      <span class="lbl">{{info.label}}</span>
+    </div>
+    <div class="side-divider"></div>
+    <div class="side-btn" @click="launchClaude" title="Claude">
+      <span class="ico">🧠</span><span class="lbl">Claude</span>
+    </div>
+    <div class="side-btn" @click="ocr" title="文字识别">
+      <span class="ico">🔍</span><span class="lbl">OCR</span>
+    </div>
+    <div class="side-btn" @click="killBrowsers" title="关闭网页">
+      <span class="ico">🌐</span><span class="lbl">关网</span>
+    </div>
+  </aside>
+
+  <!-- 主区域 -->
+  <main class="main">
+    <div class="header">
+      <span class="cat-title">{{filter==='all'?'📋 全部':types[filter]?.icon+' '+types[filter]?.label}}</span>
+      <div class="header-btns">
+        <button class="icon-btn" @click="addItem" title="添加 (Ctrl+N)">＋</button>
+        <button class="icon-btn" @click="showSettings=true" title="设置">⚙</button>
+        <button class="icon-btn danger" @click="quit" title="退出">✕</button>
+      </div>
+    </div>
+
+    <div class="list" ref="listEl" @keydown="onKey">
+      <template v-if="groupedItems.length">
+        <template v-for="(group,gkey) in groupedItems">
+          <div class="group-title" :style="{color:types[gkey]?.color}" :key="'g-'+gkey">
+            {{types[gkey]?.icon}} {{types[gkey]?.label}}
+          </div>
+          <div v-for="(item,vi) in group" class="item"
+               :class="{selected:selIdx===getGlobalIdx(gkey,vi),dragging:dragIdx===getGlobalIdx(gkey,vi)}"
+               :key="item._idx"
+               draggable="true"
+               @click="selIdx=getGlobalIdx(gkey,vi)"
+               @dblclick="launch(item)"
+               @dragstart="onDragStart($event,getGlobalIdx(gkey,vi))"
+               @dragover.prevent
+               @drop="onDrop($event,getGlobalIdx(gkey,vi))"
+          >
+            <div class="avatar" :style="{background:types[item.type]?.color||var(--accent)}">
+              {{item.name?.[0]||'?'}}
+            </div>
+            <div class="info">
+              <div class="name">{{item.name}}</div>
+              <div class="meta">{{types[item.type]?.icon||''}} {{types[item.type]?.label||item.type}} · {{item.path||'未设置'}}</div>
+            </div>
+            <button class="del-btn" @click.stop="deleteItem(getGlobalIdx(gkey,vi))">✕</button>
+          </div>
+        </template>
+      </template>
+      <div v-else class="empty">
+        <div class="big">📭</div>
+        <div>还没有快捷方式</div>
+        <div style="margin-top:8px;font-size:12px;color:var(--accent)">Ctrl+N 添加</div>
+      </div>
+    </div>
+
+    <div class="footer">
+      <span>{{items.length}} 项</span>
+      <span>↑↓导航 · Enter启动 · Del删除</span>
+    </div>
+  </main>
+
+  <!-- 设置弹窗 -->
+  <div v-if="showSettings" class="modal-overlay" @click.self="showSettings=false">
+    <div class="modal">
+      <h3>⚙ QuickBar 设置</h3>
+      <div class="row">
+        <label>吸附位置</label>
+        <select v-model="cfg.position" @change="saveConfig">
+          <option value="right">右侧</option>
+          <option value="left">左侧</option>
+          <option value="top">顶部</option>
+          <option value="bottom">底部</option>
+        </select>
+      </div>
+      <div class="row">
+        <label>透明度 {{Math.round(cfg.opacity*100)}}%</label>
+        <input type="range" min="35" max="100" v-model.number="opacityPct" @change="saveConfig">
+      </div>
+      <div class="row">
+        <label>代码编辑器</label>
+        <input v-model="cfg.editor" @change="saveConfig" style="width:120px">
+      </div>
+      <div class="row">
+        <label>OCR 热键</label>
+        <input v-model="cfg.ocr_hotkey" @change="saveConfig" style="width:140px">
+      </div>
+      <div class="row">
+        <label>开机自启</label>
+        <input type="checkbox" v-model="autostart" @change="toggleAutostart">
+      </div>
+      <div style="margin-top:18px;display:flex;gap:8px;justify-content:flex-end">
+        <button class="btn btn-ghost" @click="showSettings=false">关闭</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 添加弹窗 -->
+  <div v-if="showAdd" class="modal-overlay" @click.self="showAdd=false">
+    <div class="modal">
+      <h3>＋ 添加快捷方式</h3>
+      <div class="row"><label>类型</label>
+        <select v-model="addForm.type">
+          <option v-for="(info,key) in types" :value="key">{{info.icon}} {{info.label}}</option>
+        </select>
+      </div>
+      <div class="row"><label>名称</label><input v-model="addForm.name" @keyup.enter="doAdd" style="width:200px" autofocus></div>
+      <div class="row"><label>路径/URL/命令</label><input v-model="addForm.path" @keyup.enter="doAdd" style="width:200px"></div>
+      <div style="margin-top:18px;display:flex;gap:8px;justify-content:flex-end">
+        <button class="btn btn-ghost" @click="showAdd=false;addForm={type:'app',name:'',path:''}">取消</button>
+        <button class="btn btn-primary" @click="doAdd">确定</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast -->
+  <div v-if="toast" class="toast">{{toast}}</div>
+</div>
+
+<script>
+const {createApp,ref,reactive,computed,watch,onMounted,nextTick} = Vue;
+
+createApp({
+  setup() {
+    const items = ref([]);
+    const types = ref({});
+    const filter = ref('all');
+    const selIdx = ref(-1);
+    const cfg = reactive({position:'right',editor:'code',opacity:0.85,ocr_hotkey:'ctrl+shift+space'});
+    const showSettings = ref(false);
+    const showAdd = ref(false);
+    const addForm = reactive({type:'app',name:'',path:''});
+    const toast = ref('');
+    const dragIdx = ref(-1);
+    const autostart = ref(false);
+
+    const opacityPct = computed({
+      get:()=>Math.round(cfg.opacity*100),
+      set:v=>{cfg.opacity=v/100}
+    });
+
+    const groupedItems = computed(()=>{
+      const all = items.value.map((it,i)=>({...it,_idx:i}));
+      const filtered = filter.value==='all'?all:all.filter(it=>it.type===filter.value);
+      const groups = {};
+      if(filter.value==='all'){
+        const order = Object.keys(types.value);
+        for(const t of order){
+          const g = filtered.filter(it=>it.type===t);
+          if(g.length) groups[t]=g;
+        }
+      } else {
+        groups[filter.value] = filtered;
+      }
+      return groups;
+    });
+
+    function getGlobalIdx(gkey,vi){
+      const group = groupedItems.value[gkey];
+      return group?.[vi]?._idx??-1;
+    }
+
+    // API 调用
+    async function api(method,path,body){
+      const res = await fetch(path,{method,headers:{'Content-Type':'application/json'},body:body?JSON.stringify(body):undefined});
+      return res.json();
+    }
+
+    async function load(){
+      const [cfgData,itemData,typeData,autoData] = await Promise.all([
+        api('GET','/api/config'), api('GET','/api/items'),
+        api('GET','/api/item-types'), api('GET','/api/autostart')
+      ]);
+      Object.assign(cfg, cfgData);
+      items.value = itemData;
+      types.value = typeData;
+      autostart.value = autoData.enabled;
+    }
+
+    async function saveConfig(){
+      await api('PUT','/api/config',{...cfg});
+      flash('已保存');
+    }
+
+    async function launch(item){
+      const r = await api('POST','/api/launch',{type:item.type,path:item.path});
+      flash(r.ok?'已启动':r.msg);
+    }
+
+    async function launchClaude(){
+      const r = await api('POST','/api/claude');
+      flash(r.ok?'Claude 已启动':r.msg);
+    }
+
+    async function killBrowsers(){
+      const r = await api('POST','/api/close-browsers');
+      flash(r.ok?'正在关闭浏览器':r.msg);
+    }
+
+    async function ocr(){
+      flash('正在识别...');
+      const r = await api('POST','/api/ocr');
+      if(r.ok){
+        await navigator.clipboard.writeText(r.results?.map(b=>b.text).join('\\n')||'');
+        flash(`已识别 ${r.results?.length||0} 段并复制`);
+      } else {
+        flash(r.msg);
+      }
+    }
+
+    function flash(msg){
+      toast.value = msg;
+      setTimeout(()=>toast.value='',2000);
+    }
+
+    async function addItem(){
+      showAdd.value = true;
+      addForm.type = filter.value==='all'?'app':filter.value;
+      addForm.name = ''; addForm.path = '';
+      await nextTick();
+      document.querySelector('.modal input')?.focus();
+    }
+
+    async function doAdd(){
+      if(!addForm.name.trim()) return;
+      const r = await api('POST','/api/items',{...addForm});
+      if(r.ok){
+        items.value.push({type:addForm.type,name:addForm.name,path:addForm.path});
+        showAdd.value = false;
+        flash('已添加');
+      } else { flash(r.msg); }
+    }
+
+    async function editItem(idx){
+      const item = items.value[idx];
+      const name = prompt('名称', item.name);
+      if(name===null) return;
+      const path = prompt('路径', item.path);
+      if(path===null) return;
+      await api('PUT',`/api/items/${idx}`,{name,path});
+      items.value[idx].name = name;
+      items.value[idx].path = path;
+      flash('已更新');
+    }
+
+    async function deleteItem(idx){
+      if(!confirm(`移除「${items.value[idx]?.name}」？`)) return;
+      await api('DELETE',`/api/items/${idx}`);
+      items.value.splice(idx,1);
+      if(selIdx.value>=items.value.length) selIdx.value = items.value.length-1;
+      flash('已删除');
+    }
+
+    async function toggleAutostart(){
+      await api('POST','/api/autostart',{enable:autostart.value});
+      flash(autostart.value?'开机自启已启用':'开机自启已禁用');
+    }
+
+    function onDragStart(e,idx){
+      dragIdx.value = idx;
+      e.dataTransfer.effectAllowed = 'move';
+      e.dataTransfer.setData('text/plain',''+idx);
+    }
+
+    async function onDrop(e,targetIdx){
+      e.preventDefault();
+      const srcIdx = parseInt(e.dataTransfer.getData('text/plain'));
+      if(isNaN(srcIdx)||srcIdx===targetIdx) return;
+      const dir = srcIdx < targetIdx ? 1 : -1;
+      const item = items.value.splice(srcIdx,1)[0];
+      const newIdx = srcIdx < targetIdx ? targetIdx-1 : targetIdx;
+      items.value.splice(newIdx,0,item);
+      await api('PUT',`/api/items/${srcIdx}/move`,{direction:dir>0?1:-1});
+      dragIdx.value = -1;
+      flash('已移动');
+    }
+
+    // 键盘
+    function onKey(e){
+      if(e.key==='ArrowDown'){ selIdx.value = Math.min(selIdx.value+1,items.value.length-1); e.preventDefault(); }
+      else if(e.key==='ArrowUp'){ selIdx.value = Math.max(selIdx.value-1,0); e.preventDefault(); }
+      else if(e.key==='Enter'&&selIdx.value>=0){ launch(items.value[selIdx.value]); }
+      else if(e.key==='Delete'&&selIdx.value>=0){ deleteItem(selIdx.value); }
+      else if(e.key==='n'&&e.ctrlKey){ addItem(); e.preventDefault(); }
+    }
+
+    function quit(){ window.close(); }
+
+    onMounted(async ()=>{
+      await load();
+      document.addEventListener('keydown',onKey);
+    });
+
+    return {
+      items,types,filter,selIdx,cfg,showSettings,showAdd,addForm,toast,
+      dragIdx,autostart,opacityPct,groupedItems,getGlobalIdx,
+      load,saveConfig,launch,launchClaude,killBrowsers,ocr,flash,
+      addItem,doAdd,editItem,deleteItem,toggleAutostart,
+      onDragStart,onDrop,onKey,quit
+    };
+  }
+}).mount('#app');
+</script>
+</body>
+</html>

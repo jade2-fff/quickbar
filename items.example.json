@@ -1,0 +1,13 @@
+{
+  "position": "right",
+  "editor": "code",
+  "opacity": 0.85,
+  "ocr_hotkey": "ctrl+shift+space",
+  "items": [
+    {"type": "url", "name": "GitHub", "path": "https://github.com"},
+    {"type": "app", "name": "终端", "path": "C:/Windows/System32/cmd.exe"},
+    {"type": "folder", "name": "下载", "path": "~/Downloads"},
+    {"type": "project", "name": "示例项目", "path": "~/Projects/demo"},
+    {"type": "command", "name": "打开计算器", "path": "calc"}
+  ]
+}
